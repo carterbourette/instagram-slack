@@ -103,8 +103,8 @@ class InstagramCrawler:
             soup = BeautifulSoup(r.data, 'html.parser')
 
             # Search through all of the script tags on the page to find the one with the data
-            for test_string in soup.find_all('script'):
-
+            for a in soup.find_all('script'):
+                test_string = str(a)
                 # Find the definition of the "sharedData" variable and parse out the JSON
                 if re.search('window._sharedData = {', str(test_string)):
                     # Discard the javascript code from the JSON object
