@@ -24,6 +24,11 @@ class InstagramCrawler:
         def __str__(self):
             return self.msg + '\n' + self.additional + "\n" + self.img_url
 
+        def serialize(self):
+            if self.additional and self.img_url:
+                return '{ "text": "'+self.msg+'", "attachments": [ { "text": "'+self.additional+'", "image_url": "'+self.img_url+'" } ] }'
+            return '{ "text": "'+self.msg+'", "unfurl_media": true }'
+
 
     def __init__(self, links, file_path='.instagram-crawler', api_hook=None):
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -79,7 +84,7 @@ class InstagramCrawler:
     # Passed-in: post object.
     def send(self, post):
         # Put together the POST payload, and save emojis by encode using utf-8
-        body = '{ "text": "'+post.msg+'", "attachments": [ { "text": "'+post.additional+'", "image_url": "'+post.img_url+'" } ] }'
+        body = post.serialize()
 
         # Shoot the message to slack using the hook we setup at <workspace>.slack.com
         r = self.http.request('POST', self.api_hook, headers={'Content-Type': 'application/json'},
@@ -115,26 +120,36 @@ class InstagramCrawler:
 
                     # With the JSON doc, compile all the data we need for the slack post
                     # Note: we're going to ignore any key errors
-                    try:
-                        dictionary = json.loads(json_document)
-                        user_dictionary = dictionary['entry_data']['ProfilePage'][0]['graphql']['user']
-                        most_recent_post_dictionary = user_dictionary['edge_owner_to_timeline_media']['edges'][0]['node']
+                    def _fetch_post(json_document):
+                        try:
+                            dictionary = json.loads(json_document)
+                            user_dictionary = dictionary['entry_data']['ProfilePage'][0]['graphql']['user']
+                            most_recent_post_dictionary = user_dictionary['edge_owner_to_timeline_media']['edges'][0]['node']
 
-                        # Gather data to send to slack
-                        id = most_recent_post_dictionary.get('id')
-                        username = user_dictionary.get('username')
+                            # Gather data to send to slack
+                            id = most_recent_post_dictionary.get('id')
+                            username = user_dictionary.get('username')
 
-                        message = 'A new post from <http://instagram.com/' + username + '| @' + username + '>'
-                        image = most_recent_post_dictionary.get('display_url')
+                            # If the post is a video we'll let slack unfurl it
+                            if most_recent_post_dictionary.get('is_video'):
+                                message = 'A new post from <http://instagram.com/' + username + '| @' + username + '>\nSee: https://www.instagram.com/p/' + most_recent_post_dictionary.get('shortcode')
+                                image = None
+                                additional_text = None
+                            # Otherwise, we'll format the post
+                            else:
+                                message = 'A new post from <http://instagram.com/' + username + '| @' + username + '>'
+                                image = most_recent_post_dictionary.get('display_url')
 
-                        additional_text = most_recent_post_dictionary['edge_media_to_caption']['edges'][0]['node']['text']
-                    except: continue
+                                additional_text = most_recent_post_dictionary['edge_media_to_caption']['edges'][0]['node']['text']
+                        except: pass
 
-                    # Create a post value object to pass to the message sender with the values from instagram
-                    post = InstagramCrawler.Post(id, username, message, additional_text, image)
+                        # Create a post value object to pass to the message sender with the values from instagram
+                        return InstagramCrawler.Post(id, username, message, additional_text, image)
+
+                    post = _fetch_post(json_document)
 
                     # Check to see if the post is blacklisted, otherwise ship it
-                    if self.is_safe_id(username, id):
+                    if self.is_safe_id(post.usr, post.id):
                         self.send(post)
 
                     # We can stop looking now
