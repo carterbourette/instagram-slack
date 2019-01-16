@@ -6,7 +6,7 @@
 #----------------------------------------------------------------------------
 #
 import urllib3
-import sys, re, json
+import sys, re, json, time
 from datetime import datetime
 from bs4 import BeautifulSoup
 
@@ -21,13 +21,12 @@ class InstagramCrawler:
             self.additional = additional
             self.img_url = img_url
 
-        def __str__(self):
-            return self.msg + '\n' + self.additional + "\n" + self.img_url
-
         def serialize(self):
-            if self.additional and self.img_url:
-                return '{ "text": "'+self.msg+'", "attachments": [ { "text": "'+self.additional+'", "image_url": "'+self.img_url+'" } ] }'
-            return '{ "text": "'+self.msg+'", "unfurl_media": true }'
+            if self.img_url and self.additional:
+                return '{ "text": "'+str(self.msg)+'", "attachments": [ { "text": "'+str(self.additional)+'", "image_url": "'+str(self.img_url)+'" } ] }'
+            elif self.img_url:
+                return '{ "text": "'+str(self.msg)+'", "attachments": [ {"image_url": "'+str(self.img_url)+'" } ] }'
+            return '{ "text": "'+self.msg+'", "unfurl_media": true, "unfurl_links": true }'
 
 
     def __init__(self, links, file_path='.instagram-crawler', api_hook=None):
@@ -129,19 +128,20 @@ class InstagramCrawler:
                             # Gather data to send to slack
                             id = most_recent_post_dictionary.get('id')
                             username = user_dictionary.get('username')
+                            image = None
+                            additional_text = None
 
                             # If the post is a video we'll let slack unfurl it
                             if most_recent_post_dictionary.get('is_video'):
-                                message = 'A new post from <http://instagram.com/' + username + '| @' + username + '>\nSee: https://www.instagram.com/p/' + most_recent_post_dictionary.get('shortcode')
-                                image = None
-                                additional_text = None
+                                message = 'https://www.instagram.com/p/' + most_recent_post_dictionary.get('shortcode') + ' '
                             # Otherwise, we'll format the post
                             else:
                                 message = 'A new post from <http://instagram.com/' + username + '| @' + username + '>'
                                 image = most_recent_post_dictionary.get('display_url')
 
                                 additional_text = most_recent_post_dictionary['edge_media_to_caption']['edges'][0]['node']['text']
-                        except: pass
+                        except Exception as err:
+                            pass
 
                         # Create a post value object to pass to the message sender with the values from instagram
                         return InstagramCrawler.Post(id, username, message, additional_text, image)
@@ -151,6 +151,7 @@ class InstagramCrawler:
                     # Check to see if the post is blacklisted, otherwise ship it
                     if self.is_safe_id(post.usr, post.id):
                         self.send(post)
+                        time.sleep(15)
 
                     # We can stop looking now
                     break
