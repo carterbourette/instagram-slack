@@ -16,15 +16,21 @@ class InstagramCrawler:
         def __init__(self, id='', usr='', msg='', additional='', img_url=''):
             self.id = id
             self.usr = usr
-            self.msg = msg
-            self.additional = additional
+            self.msg = msg or ''
+            self.additional = additional or ''
             self.img_url = img_url
 
         def serialize(self):
-            if self.img_url and self.additional:
+            # If their are multiple images, we'll need to include separate attachments
+            if isinstance(self.img_url, list):
+                insert_list = [ '{ "text": "%s", "image_url": "%s" }' % (self.additional, img) for img in self.img_url ]
+                return '{ "text": "%s", "attachments": [ %s ] }' % (self.msg, ','.join(insert_list))
+
+            # If we have a singular urls, do a normal attachment
+            elif self.img_url and self.additional:
                 return '{ "text": "%s", "attachments": [ { "text": "%s", "image_url": "%s" } ] }' % (self.msg, self.additional, self.img_url,)
-            elif self.img_url:
-                return '{ "text": "%s", "attachments": [ {"image_url": "%s" } ] }' % (self.msg, self.img_url,)
+
+            # Otherwise, let slack unfurl the content
             return '{ "text": "%s", "unfurl_media": true, "unfurl_links": true }' % (self.msg,)
 
 
@@ -80,65 +86,72 @@ class InstagramCrawler:
         time.sleep(15)
 
 
+    def fetch_json(self, url):
+        """Given a url, return the _sharedData variable from instagram as dict."""
+        # Get the html code and pipe into our html parser
+        r = requests.get(url)
+
+        soup = BeautifulSoup(r.text, 'html.parser')
+
+        # Search through all of the script tags on the page to find the one with the data
+        for json_str in soup.find_all('script'):
+            json_str = str(json_str)
+
+            # Find the definition of the "sharedData" variable and parse out the JSON
+            if re.search('window._sharedData = {', json_str):
+                start = json_str.find('{')
+                end = json_str.rfind('}') + 1
+                # Discard the variable declaration from the javascript, return JSON
+                return json.loads(json_str[start:end])
+
+
     def start(self):
         """Run the crawler."""
 
         self._startup()
         # For each instagram account
         for link in self.links:
+            dictionary = self.fetch_json(link)
 
-            # Get the html code and pipe into our html parser
-            r = requests.get(link)
+            # With the JSON doc, compile all the data we need for the slack post
+            # Note: we're going to ignore any key errors
+            # TODO: Find a way to .get(var, None) of nested dicts
+            try:
+                user_dictionary = dictionary['entry_data']['ProfilePage'][0]['graphql']['user']
+                most_recent_post_dictionary = user_dictionary['edge_owner_to_timeline_media']['edges'][0]['node']
 
-            soup = BeautifulSoup(r.text, 'html.parser')
+                # Gather data to send to slack
+                id = most_recent_post_dictionary.get('id')
+                username = user_dictionary.get('username')
 
-            # Search through all of the script tags on the page to find the one with the data
-            for a in soup.find_all('script'):
-                test_string = str(a)
+                # Check to see if the post is blacklisted, otherwise continue
+                if not self.is_safe_id(username, id):
+                    continue
 
-                # Find the definition of the "sharedData" variable and parse out the JSON
-                if re.search('window._sharedData = {', str(test_string)):
-                    # Discard the javascript code from the JSON object
-                    start = test_string.find('{')
-                    end = test_string.rfind('}') + 1
+                message = 'A new post from <%s/%s| @%s>' % (self.base_url, username, username)
+                additional_text = most_recent_post_dictionary['edge_media_to_caption']['edges'][0]['node']['text']
 
-                    json_document = test_string[start:end]
+                # If the post is a video we'll let slack unfurl it
+                if most_recent_post_dictionary.get('is_video'):
+                    message = self.base_url + '/p/' + most_recent_post_dictionary.get('shortcode')
+                    image = None
+                    additional_text = None
 
-                    # With the JSON doc, compile all the data we need for the slack post
-                    # Note: we're going to ignore any key errors
-                    # TODO: Find a way to .get(var, None) of nested dicts
-                    try:
-                        dictionary = json.loads(json_document)
-                        user_dictionary = dictionary['entry_data']['ProfilePage'][0]['graphql']['user']
-                        most_recent_post_dictionary = user_dictionary['edge_owner_to_timeline_media']['edges'][0]['node']
+                # If the post is a slideshow, we'll get each image via the post page
+                elif most_recent_post_dictionary.get('__typename') == 'GraphSidecar':
+                    slideshow_dict = self.fetch_json(self.base_url + '/p/' + most_recent_post_dictionary.get('shortcode'))
 
-                        # Gather data to send to slack
-                        id = most_recent_post_dictionary.get('id')
-                        username = user_dictionary.get('username')
-                        image = None
-                        additional_text = None
+                    image = [ side_image['node']['display_url'] for side_image in slideshow_dict['entry_data']['PostPage'][0]['graphql']['shortcode_media']['edge_sidecar_to_children']['edges'] ]
 
-                        # If the post is a video we'll let slack unfurl it
-                        if most_recent_post_dictionary.get('is_video'):
-                            message = self.base_url + '/p/' + most_recent_post_dictionary.get('shortcode') + ' '
-                        # Otherwise, we'll format the post as per slacks guidelines
-                        else:
-                            message = 'A new post from <%s/%s| @%s>' % (self.base_url, username, username)
-                            image = most_recent_post_dictionary.get('display_url')
+                # Otherwise, we'll format the post as per slacks guidelines
+                else:
+                    additional_text = most_recent_post_dictionary['edge_media_to_caption']['edges'][0]['node']['text']
 
-                            additional_text = most_recent_post_dictionary['edge_media_to_caption']['edges'][0]['node']['text']
+                post = InstagramCrawler.Post(id, username, message, additional_text, image)
+                self.send(post)
 
-                        post = InstagramCrawler.Post(id, username, message, additional_text, image)
-
-                        # Check to see if the post is blacklisted, otherwise ship it
-                        if self.is_safe_id(post.usr, post.id):
-                            self.send(post)
-
-                    except Exception as err:
-                        pass
-
-                    # We can stop looking now
-                    break
+            except Exception as err:
+                pass
 
         # Cleanup/write our internal state when we finish
         self._cleanup()
