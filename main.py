@@ -145,6 +145,7 @@ class InstagramCrawler:
 
                 # Otherwise, we'll format the post as per slacks guidelines
                 else:
+                    image = most_recent_post_dictionary.get('display_url')
                     additional_text = most_recent_post_dictionary['edge_media_to_caption']['edges'][0]['node']['text']
 
                 post = InstagramCrawler.Post(id, username, message, additional_text, image)
