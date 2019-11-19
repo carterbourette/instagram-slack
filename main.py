@@ -88,8 +88,8 @@ class InstagramCrawler:
     def profileLinks(self,text):
         """Convert mentions into profile links"""
         matches = re.findall("@([^\s@]+)",text)
-        for match in matches:
-            text = re.sub(match,match + " (https://www.instagram.com/" + match + "/) ",text)
+        for username in matches:
+            text = re.sub('@'+username,'<%s/%s| @%s>' % (self.base_url, username, username),text)
         return text
 
 
