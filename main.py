@@ -85,14 +85,6 @@ class InstagramCrawler:
         # A time delay gives slack time to crawl between posts
         time.sleep(15)
 
-    def profile_links(self,text):
-        """Convert mentions into profile links"""
-        if (text == None) return text
-        matches = re.findall("@([^\s@]+)",text)
-        for username in matches:
-            text = re.sub('@' + username,'<%s/%s| @%s>' % (self.base_url, username, username),text)
-        return text
-
 
     def fetch_json(self, url):
         """Given a url, return the _sharedData variable from instagram as dict."""
@@ -155,8 +147,6 @@ class InstagramCrawler:
                 else:
                     image = most_recent_post_dictionary.get('display_url')
                     additional_text = most_recent_post_dictionary['edge_media_to_caption']['edges'][0]['node']['text']
-
-                additional_text = self.profile_links(additional_text)
 
                 post = InstagramCrawler.Post(id, username, message, additional_text, image)
                 self.send(post)
