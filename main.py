@@ -85,6 +85,15 @@ class InstagramCrawler:
         # A time delay gives slack time to crawl between posts
         time.sleep(15)
 
+    def profile_links(self,text):
+        """Convert mentions into profile links"""
+        if text is None:
+            return text
+        matches = re.findall("@([^\s@]+)",text)
+        for username in matches:
+            text = re.sub('@' + username,'<%s/%s| @%s>' % (self.base_url, username, username),text)
+        return text
+
 
     def fetch_json(self, url):
         """Given a url, return the _sharedData variable from instagram as dict."""
@@ -140,13 +149,13 @@ class InstagramCrawler:
                 # If the post is a slideshow, we'll get each image via the post page
                 elif most_recent_post_dictionary.get('__typename') == 'GraphSidecar':
                     slideshow_dict = self.fetch_json(self.base_url + '/p/' + most_recent_post_dictionary.get('shortcode'))
-
                     image = [ side_image['node']['display_url'] for side_image in slideshow_dict['entry_data']['PostPage'][0]['graphql']['shortcode_media']['edge_sidecar_to_children']['edges'] ]
 
                 # Otherwise, we'll format the post as per slacks guidelines
                 else:
                     image = most_recent_post_dictionary.get('display_url')
-                    additional_text = most_recent_post_dictionary['edge_media_to_caption']['edges'][0]['node']['text']
+
+                additional_text = self.profile_links(additional_text)
 
                 post = InstagramCrawler.Post(id, username, message, additional_text, image)
                 self.send(post)
